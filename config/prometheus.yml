@@ -1,0 +1,19 @@
+global:
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    external_labels:
+        monitor: 'comms_monitor'
+
+        # rule_files:
+        #     - 'alert.rules'
+
+scrape_configs:
+    - job_name: 'prometheus'
+
+      static_configs:
+          - targets: ['localhost:9090', 'comms_node_exporter:9100', 'comms_cadvisor:8080']
+
+alerting:
+    alertmanagers:
+        - static_configs:
+            - targets: ['comms_alertmanager:9093']

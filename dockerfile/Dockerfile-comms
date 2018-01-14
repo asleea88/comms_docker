@@ -1,0 +1,21 @@
+FROM sergeymakinen/oracle-instant-client:86dec8cedede
+
+LABEL maintainer="asleea88@gmail.com"
+
+COPY ./data/requirements.txt /root
+COPY ./data/sources.list /etc/apt
+
+RUN apt-get -y update &&\
+    apt-get -y install tzdata &&\
+    apt-get -y install python3 &&\
+    apt-get -y install python3-pip &&\
+    apt-get -y install python3-dev &&\
+    pip3 install -U pip &&\
+    pip3 install -r /root/requirements.txt &&\
+    apt-get -y install python &&\
+    apt-get -y install python-pip &&\
+    pip2 install supervisor
+
+WORKDIR /data/g2sHost
+
+CMD echo "It is supposed to use docker-compose..."

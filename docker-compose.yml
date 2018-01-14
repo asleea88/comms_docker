@@ -1,0 +1,477 @@
+version: '3.4'
+
+# Not supported by swarm mode
+# - depends_on
+# - container_name
+# - pid
+
+networks:
+    swarm_network:
+        driver: overlay
+        attachable: true
+        ipam:
+            config:
+                - subnet: 10.0.0.0/24
+
+#-----
+
+volumes:
+    prometheus_volume:
+    gragana_volume:
+
+#-----
+
+configs:
+    nginx_config:
+        file: ./g2s_server/g2sHost/etc/nginx.conf
+        external: false
+    nginx_auth:
+        file: ./config/.htpasswd
+        external: false
+
+    redis_config:
+        file: ./g2s_server/g2sHost/etc/redis.conf
+        external: false
+
+    logger_config:
+        file: ./config/syslog-ng.conf
+        external: false
+
+    prometheus_config:
+        file: ./config/prometheus.yml
+        external: false
+
+    prometheus_alert_rule:
+        file: ./config/alert.rules
+        external: false
+    alertmanager_config:
+        file: ./config/alertmanager.yml
+        external: false
+
+#-----
+
+services:
+
+    prometheus:
+        image: prom/prometheus:latest
+        command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention=3d"]
+
+        configs:
+            - source: prometheus_config
+              target: /etc/prometheus/prometheus.yml
+            - source: prometheus_alert_rule
+              target: /etc/prometheus/alert.rules
+
+        deploy:
+            mode: replicated
+            replicas: 1
+            placement:
+                constraints:
+                    - node.role == manager
+
+        logging:
+            driver: syslog
+            options:
+                syslog-address: "tcp://localhost:50000"
+                syslog-format: rfc5424
+                tag: prometheus
+
+        networks:
+            swarm_network:
+                aliases:
+                    - comms_prometheus
+
+        # ports:
+        #     - published: 9090
+        #       target: 9090
+        #       protocol: tcp
+        #       mode: ingress
+
+        volumes:
+            - type: volume
+              source: prometheus_volume
+              target: /prometheus
+
+
+    alertmanager:
+        image: prom/alertmanager:latest
+        command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager", "--log.level=debug"]
+
+        configs:
+            - source: alertmanager_config
+              target: /etc/alertmanager/alertmanager.yml
+
+        deploy:
+            mode: replicated
+            replicas: 1
+            placement:
+                constraints:
+                    - node.role == manager
+
+        depends_on:
+            - prometheus
+
+        logging:
+            driver: syslog
+            options:
+                syslog-address: "tcp://localhost:50000"
+                syslog-format: rfc5424
+                tag: alertmanager
+
+        networks:
+            swarm_network:
+                aliases:
+                    - comms_alertmanager
+
+        ports:
+            - published: 9093
+              target: 9093
+              protocol: tcp
+              mode: ingress
+
+
+    grafana:
+        image: grafana/grafana:latest
+
+        depends_on:
+            - prometheus
+
+        deploy:
+            mode: replicated
+            replicas: 1
+            placement:
+                constraints:
+                    - node.role == manager
+
+        environment:
+            - GF_SECURITY_ADMIN_PASSWORD=pass
+
+        logging:
+            driver: syslog
+            options:
+                syslog-address: "tcp://localhost:50000"
+                syslog-format: rfc5424
+                tag: grafana
+
+        networks:
+            swarm_network:
+                aliases:
+                    - comms_grafana
+
+        ports:
+            - published: 3000
+              target: 3000
+              protocol: tcp
+              mode: ingress
+
+        volumes:
+
+            - type: volume
+              source: gragana_volume
+              target: /var/lib/grafana
+
+
+    node_exporter:
+        image: prom/node-exporter:latest
+
+        deploy:
+            mode: global
+        networks:
+
+            swarm_network:
+                aliases:
+                    - comms_node_exporter
+
+                      #         ports:
+                      #             - published: 9100
+                      #               target: 9100
+                      #               protocol: tcp
+                      #               mode: host
+
+
+    cadvisor:
+        image: google/cadvisor:latest
+
+        deploy:
+            mode: global
+
+        networks:
+            swarm_network:
+                aliases:
+                    - comms_cadvisor
+
+                      #         ports:
+                      #             - published: 8080
+                      #               target: 8080
+                      #               protocol: tcp
+                      #               mode: host
+
+        volumes:
+            - /:/rootfs:ro
+            - /var/run:/var/run:rw
+            - /sys:/sys:ro
+            - /var/lib/docker/:/var/lib/docker:ro
+
+
+    test:
+        image: asleea/test:latest
+        command: ["tail", "-f", "/dev/null"]
+
+        environment:
+            - GF_SECURITY_ADMIN_PASSWORD=pass
+
+        networks:
+            swarm_network:
+                aliases:
+                    - comms_test
+
+        pid: host
+
+
+    worker:
+        image: asleea/comms:latest
+        command: ["supervisord", "-nc", "etc/supervisord.conf"]
+
+        depends_on:
+            - logger
+            - eventscheduler
+            - mysterysignmanager
+            - redis
+
+        environment:
+            - TZ=Asia/Seoul
+
+        deploy:
+            mode: replicated
+            replicas: 1
+            placement:
+                constraints:
+                    - node.role == manager
+
+        logging:
+            driver: syslog
+            options:
+                syslog-address: "tcp://localhost:50000"
+                syslog-format: rfc5424
+                tag: comms
+
+        networks:
+            swarm_network:
+                ipv4_address: 10.0.0.10
+                aliases:
+                    - comms_worker
+
+        ports:
+            - published: 10000
+              target: 10000
+              protocol: tcp
+              mode: host
+
+        restart: unless-stopped
+
+        volumes:
+            - type: bind
+              source: ./g2s_server
+              target: /data
+
+        working_dir: /data/g2sHost
+
+
+    eventscheduler:
+        image: asleea/comms:latest
+        command: ["python3", "-u", "manage.py", "eventSched"]
+
+        deploy:
+            mode: replicated
+            replicas: 1
+            placement:
+                constraints:
+                    - node.role == manager
+
+        depends_on:
+            - logger
+
+        environment:
+            - TZ=Asia/Seoul
+
+        logging:
+            driver: syslog
+            options:
+                syslog-address: "tcp://localhost:50000"
+                syslog-format: rfc5424
+                tag: scheduler
+
+        networks:
+            swarm_network:
+                ipv4_address: 10.0.0.6
+                aliases:
+                    - comms_eventscheduler
+
+        volumes:
+            - type: bind
+              source: ./g2s_server
+              target: /data
+
+        working_dir: /data/g2sHost
+
+
+    mysterysignmanager:
+        image: asleea/comms:latest
+        command: ["python3", "-u", "manage.py", "mysterySign"]
+
+        deploy:
+            mode: replicated
+            replicas: 1
+            placement:
+                constraints:
+                    - node.role == manager
+
+        depends_on:
+            - logger
+
+        environment:
+            - TZ=Asia/Seoul
+
+        logging:
+            driver: syslog
+            options:
+                syslog-address: "tcp://localhost:50000"
+                syslog-format: rfc5424
+                tag: mystery-sign
+
+        networks:
+            swarm_network:
+                ipv4_address: 10.0.0.7
+                aliases:
+                    - comms_mysterysignmanager
+
+        volumes:
+            - type: bind
+              source: ./g2s_server
+              target: /data
+
+        working_dir: /data/g2sHost
+
+
+    redis:
+        image: library/redis:alpine
+        command: ["redis-server", "/redis_config"]
+
+        environment:
+            - TZ=Asia/Seoul
+
+        configs:
+            - source: redis_config
+              target: /redis_config
+
+        depends_on:
+            - logger
+            - eventscheduler
+
+        logging:
+            driver: syslog
+            options:
+                syslog-address: "tcp://localhost:50000"
+                syslog-format: rfc5424
+                tag: redis
+
+        networks:
+            swarm_network:
+                ipv4_address: 10.0.0.2
+                aliases:
+                    - comms_redis
+
+        ports:
+            - published: 6379
+              target: 6379
+              protocol: tcp
+              mode: ingress
+
+        restart: unless-stopped
+
+
+    nginx:
+        image: library/nginx:alpine
+        container_name: nginx
+        command: ["nginx", "-c", "/etc/nginx/nginx.config"]
+
+        configs:
+            - source: nginx_config
+              target: /etc/nginx/nginx.config
+            - source: nginx_auth
+              target: /etc/nginx/.htpasswd
+
+        depends_on:
+            - worker
+            - logger
+
+        environment:
+            - TZ=Asia/Seoul
+
+        logging:
+            driver: syslog
+            options:
+                syslog-address: "tcp://localhost:50000"
+                syslog-format: rfc5424
+                tag: nginx
+
+        networks:
+            swarm_network:
+                ipv4_address: 10.0.0.3
+                aliases:
+                    - comms_nginx
+
+        ports:
+            - published: 10001
+              target: 10001
+              protocol: tcp
+              mode: ingress
+            - published: 10002
+              target: 10002
+              protocol: tcp
+              mode: ingress
+            - published: 9090
+              target: 9090
+              protocol: tcp
+              mode: ingress
+
+        restart: unless-stopped
+
+
+    logger:
+        image: balabit/syslog-ng:latest
+        entrypoint: ["sh", "-c", "/usr/sbin/syslog-ng -Fvde 2> /var/log/syslog.log"]
+
+        configs:
+            - source: logger_config
+              target: /etc/syslog-ng/syslog-ng.conf
+
+        deploy:
+            mode: replicated
+            replicas: 1
+            placement:
+                constraints:
+                    - node.role == manager
+
+        environment:
+            - GF_SECURITY_ADMIN_PASSWORD=pass
+
+        networks:
+            swarm_network:
+                ipv4_address: 10.0.0.100
+                aliases:
+                    - comms_logger
+
+        ports:
+            - published: 50000
+              target: 601
+              protocol: tcp
+              mode: host
+
+        restart: unless-stopped
+
+        volumes:
+            - type: bind
+              source: ./log
+              target: /var/log
+

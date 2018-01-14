@@ -1,0 +1,14 @@
+FROM ubuntu:16.04
+
+LABEL maintainer="asleea88@gmail.com"
+
+COPY ./data/sources.list /etc/apt
+
+RUN apt-get -yqq update &&\
+    apt-get -yqq install tzdata &&\
+    apt-get -yqq install build-essential &&\
+    apt-get -yqq install iputils-ping &&\
+    apt-get -yqq install net-tools &&\
+    apt-get -yqq install netcat
+
+CMD bash

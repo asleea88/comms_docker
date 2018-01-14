@@ -1,0 +1,12 @@
+
+groups:
+    - name: example
+      rules:
+          - alert: HighCpuRate
+            expr: http_request_size_bytes_count{handler="prometheus", instance="localhost:9090"} > 5
+            labels:
+                alertname: test-alert
+            annotations:
+                summary: This is test alert
+
+
