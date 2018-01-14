@@ -1,0 +1,4 @@
+[submodule "g2s_server"]
+	path = g2s_server
+	url = https://asleea@bitbucket.org/asleea/g2s_server.git
+	branch = comms-docker-py3
